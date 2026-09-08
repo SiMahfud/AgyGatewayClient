@@ -15,15 +15,20 @@
 class AgyStorage {
 public:
   static bool init() {
+    static bool fsInitialized = false;
+    if (fsInitialized) return true;
 #if defined(ESP8266)
     if (!LittleFS.begin()) {
       Serial.println("[STORAGE] Gagal mount LittleFS. Memformat...");
       LittleFS.format();
-      return LittleFS.begin();
+      fsInitialized = LittleFS.begin();
+      return fsInitialized;
     }
+    fsInitialized = true;
     return true;
 #elif defined(ESP32)
-    return LittleFS.begin(true);
+    fsInitialized = LittleFS.begin(true);
+    return fsInitialized;
 #else
     return false;
 #endif
@@ -32,7 +37,7 @@ public:
   // Simpan kredensial WiFi & Konfigurasi Gateway
   static bool saveNetworkConfig(const String& ssid, const String& pass, 
                                 const String& host, uint16_t port, const String& path, 
-                                const String& devId, const String& devKey) {
+                                const String& devId, const String& devKey, bool useSsl = false) {
     if (!init()) return false;
 
     JsonDocument doc;
@@ -43,6 +48,7 @@ public:
     doc["path"] = path;
     doc["devId"] = devId;
     doc["devKey"] = devKey;
+    doc["ssl"] = useSsl;
 
     File f = LittleFS.open("/agy_config.json", "w");
     if (!f) {
@@ -56,10 +62,10 @@ public:
     return true;
   }
 
-  // Muat kredensial WiFi & Konfigurasi Gateway
+  // Muat kredensial WiFi & Konfigurasi Gateway (dengan info SSL)
   static bool loadNetworkConfig(String& ssid, String& pass, 
                                 String& host, uint16_t& port, String& path, 
-                                String& devId, String& devKey) {
+                                String& devId, String& devKey, bool& useSsl) {
     if (!init()) return false;
     if (!LittleFS.exists("/agy_config.json")) return false;
 
@@ -82,19 +88,29 @@ public:
     path = doc["path"] | "/ws";
     devId = doc["devId"] | "";
     devKey = doc["devKey"] | "";
+    useSsl = doc["ssl"] | (port == 443);
 
     return (ssid.length() > 0 && devId.length() > 0);
   }
 
+  // Overload ringkas kompatibilitas lama
+  static bool loadNetworkConfig(String& ssid, String& pass, 
+                                String& host, uint16_t& port, String& path, 
+                                String& devId, String& devKey) {
+    bool dummySsl = false;
+    return loadNetworkConfig(ssid, pass, host, port, path, devId, devKey, dummySsl);
+  }
+
   // Simpan seluruh konfigurasi dynamic pins ke Flash
-  static bool savePinConfig(const std::vector<AgyComponent>& components) {
+  static bool savePinConfig(const std::vector<AgyComponent*>& components) {
     if (!init()) return false;
 
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
 
     for (size_t i = 0; i < components.size(); i++) {
-      const AgyComponent& c = components[i];
+      if (!components[i]) continue;
+      const AgyComponent& c = *components[i];
       if (!c.isDynamic) continue; // Hanya simpan komponen dinamis
 
       JsonObject item = arr.add<JsonObject>();

@@ -14,15 +14,23 @@ AgyGatewayClient iot;
 void setup() {
   Serial.begin(115200);
 
+  // Aktifkan Hardware Watchdog
+  iot.enableWatchdog(8);
+
   // Daftarkan listener untuk Virtual Pin V1 dari server/dashboard
   iot.onVirtualWrite("V1", [](const String& pin, const String& value) {
-    Serial.printf("[VIRTUAL] Pin %s menerima perintah: %s\n", pin.c_str(), value.c_str());
-    // Lakukan aksi kustom Anda di sini
+    Serial.printf("[VIRTUAL] Pin %s menerima nilai: %s\n", pin.c_str(), value.c_str());
+    // Lakukan aksi kustom Anda di sini (misal menggerakkan servo atau mengubah display)
   });
 
-  // Listener kontrol universal
+  // Listener kontrol universal untuk semua komponen
   iot.onCommand([](const String& compId, const String& value) {
     Serial.printf("[COMMAND] Komponen %s diatur ke: %s\n", compId.c_str(), value.c_str());
+  });
+
+  // Listener status koneksi WebSocket
+  iot.onConnection([](bool isConnected) {
+    Serial.printf("[CONN] Status WebSocket: %s\n", isConnected ? "TERHUBUNG" : "TERPUTUS");
   });
 
   iot.begin(WIFI_SSID, WIFI_PASS, WS_HOST, WS_PORT, WS_PATH, DEVICE_ID, DEVICE_KEY);

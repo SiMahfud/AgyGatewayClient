@@ -1,7 +1,7 @@
 #ifndef AGY_GATEWAY_CLIENT_H
 #define AGY_GATEWAY_CLIENT_H
 
-#define AGY_GATEWAY_CLIENT_VERSION "1.1.0"
+#define AGY_GATEWAY_CLIENT_VERSION "1.2.0"
 
 #include <Arduino.h>
 #include <vector>
@@ -13,6 +13,7 @@
   #include <ESP8266WiFi.h>
 #elif defined(ESP32)
   #include <WiFi.h>
+  #include <esp_task_wdt.h>
 #endif
 
 #include "AgyTypes.h"
@@ -24,6 +25,7 @@
 class AgyGatewayClient {
 public:
   AgyGatewayClient();
+  ~AgyGatewayClient();
 
   // Inisialisasi dengan parameter lengkap
   void begin(const char* ssid, const char* pass, const char* wsHost, uint16_t wsPort, const char* wsPath, const char* deviceId, const char* deviceKey, bool useSsl = false);
@@ -36,10 +38,22 @@ public:
   // -------------------------------------------------------------
   // Otomatis membaca kredensial dari Flash. Jika belum ada atau gagal konek,
   // menyalakan AP Captive Portal untuk konfigurasi via HP/Laptop.
-  bool autoConnect(const char* apName = nullptr, uint32_t timeoutSec = 60);
+  // Mendukung password WPA2 opsional (min. 8 karakter) untuk mengamankan AP.
+  bool autoConnect(const char* apName = nullptr, const char* apPass = nullptr, uint32_t timeoutSec = 60);
+  bool autoConnect(const char* apName, uint32_t timeoutSec) {
+    return autoConnect(apName, nullptr, timeoutSec);
+  }
 
   // Paksa membuka Captive Portal (misal dipicu tombol reset)
-  void startPortal(const char* apName = nullptr);
+  void startPortal(const char* apName = nullptr, const char* apPass = nullptr);
+
+  // -------------------------------------------------------------
+  // Hardware Watchdog Timer (WDT)
+  // Mencegah mikrokontroler hang/freeze permanen bila terjadi error hardware
+  // -------------------------------------------------------------
+  void enableWatchdog(uint32_t timeoutSec = 8);
+  void disableWatchdog();
+  void feedWatchdog();
 
   // Main loop yang harus dipanggil di void loop() mikrokontroler
   void loop();
@@ -70,12 +84,14 @@ public:
   // Registrasi Komponen & Sensor Modular (C++ Manual)
   // -------------------------------------------------------------
   AgyComponent* addSwitch(const String& id, int pin, const String& name = "", bool activeLow = true, bool initialState = false);
+  AgyComponent* addDimmer(const String& id, int pin, const String& name = "", const String& unit = "%", int initialValue = 0);
   AgyComponent* addSensor(const String& id, const String& name, const String& unit, std::function<float()> readFn, unsigned long intervalMs = 5000);
   AgyComponent* addComponent(const AgyComponent& comp);
 
   void updateSensor(const String& id, float value);
   void updateSensor(const String& id, const String& value);
   void setSwitchState(const String& id, bool state);
+  void setDimmerValue(const String& id, int value);
 
   // -------------------------------------------------------------
   // Virtual Pins (Blynk style)
@@ -97,6 +113,10 @@ public:
   // forceAll = true: Full Sync Telemetry (kirim seluruh komponen)
   void sendTelemetry(bool forceAll = false);
   void sendFullTelemetry() { sendTelemetry(true); }
+
+  // Security & Token Handshake
+  void setSendKeyOnTelemetry(bool enable) { _sendKeyOnTelemetry = enable; }
+  String getAuthToken() const { return _authToken; }
 
   // Getter status
   bool isConnected() const { return _wsConnected; }
@@ -132,17 +152,31 @@ private:
   AgyPortal _portal;
   bool _portalActive = false;
 
+  // Telemetry rate limiting & batching
+  unsigned long _lastTelemetrySend = 0;
+  unsigned long _minTelemetryInterval = 50;
+  bool _telemetryPending = false;
+
   // Registry komponen
-  std::vector<AgyComponent> _components;
+  std::vector<AgyComponent*> _components;
   std::map<String, AgyVirtualWriteCallback> _virtualCallbacks;
   AgyCommandCallback _commandCallback = nullptr;
   AgyConnectionCallback _connCallback = nullptr;
+
+  // Watchdog Timer
+  bool _wdtEnabled = false;
+  uint32_t _wdtTimeoutSec = 8;
+
+  // Security & Token Handshake
+  String _authToken = "";
+  bool _sendKeyOnTelemetry = true;
 
   void setupWiFi();
   void initWebSocket();
   void handleWsEvent(WStype_t type, uint8_t* payload, size_t length);
   void processIncomingJson(const String& jsonStr);
   void applySwitchState(AgyComponent& comp, bool state);
+  void applyDimmerValue(AgyComponent& comp, int value);
   void checkSensorIntervals();
   void checkDynamicSensors();
   void checkDigitalInputs();

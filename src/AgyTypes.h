@@ -34,6 +34,7 @@ inline AgyComponentType agyStringToComponentType(const String& str) {
 enum AgyDriverType {
   AGY_DRIVER_CUSTOM = 0,
   AGY_DRIVER_SWITCH,      // Digital Output (Relay, Saklar, LED)
+  AGY_DRIVER_DIMMER,      // PWM / Slider (LED Dimmer, Kecepatan Kipas, Motor)
   AGY_DRIVER_DIGITAL_IN,  // Digital Input (PIR, Tombol, Sensor Pintu)
   AGY_DRIVER_ANALOG,      // ADC / Analog In (A0)
   AGY_DRIVER_DHT11,       // Sensor Suhu & Kelembapan DHT11
@@ -49,6 +50,7 @@ enum AgyDriverType {
 inline const char* agyDriverTypeToString(AgyDriverType d) {
   switch (d) {
     case AGY_DRIVER_SWITCH:     return "switch";
+    case AGY_DRIVER_DIMMER:     return "dimmer";
     case AGY_DRIVER_DIGITAL_IN: return "digital_in";
     case AGY_DRIVER_ANALOG:     return "analog";
     case AGY_DRIVER_DHT11:      return "dht11";
@@ -64,17 +66,18 @@ inline const char* agyDriverTypeToString(AgyDriverType d) {
 }
 
 inline AgyDriverType agyStringToDriverType(const String& str) {
-  if (str == "switch" || str == "relay")     return AGY_DRIVER_SWITCH;
+  if (str == "switch" || str == "relay")                     return AGY_DRIVER_SWITCH;
+  if (str == "dimmer" || str == "pwm" || str == "slider")   return AGY_DRIVER_DIMMER;
   if (str == "digital_in" || str == "pir" || str == "button" || str == "indicator") return AGY_DRIVER_DIGITAL_IN;
-  if (str == "analog" || str == "adc")       return AGY_DRIVER_ANALOG;
-  if (str == "dht11")                        return AGY_DRIVER_DHT11;
-  if (str == "dht22" || str == "am2302")     return AGY_DRIVER_DHT22;
-  if (str == "ds18b20" || str == "onewire")  return AGY_DRIVER_DS18B20;
-  if (str == "bmp280" || str == "bme280")    return AGY_DRIVER_BMP280;
-  if (str == "bh1750" || str == "lux")       return AGY_DRIVER_BH1750;
-  if (str == "sht30" || str == "sht31")      return AGY_DRIVER_SHT30;
-  if (str == "aht10" || str == "aht20")      return AGY_DRIVER_AHT10;
-  if (str == "i2c")                          return AGY_DRIVER_I2C;
+  if (str == "analog" || str == "adc")                       return AGY_DRIVER_ANALOG;
+  if (str == "dht11")                                        return AGY_DRIVER_DHT11;
+  if (str == "dht22" || str == "am2302")                     return AGY_DRIVER_DHT22;
+  if (str == "ds18b20" || str == "onewire")                  return AGY_DRIVER_DS18B20;
+  if (str == "bmp280" || str == "bme280")                    return AGY_DRIVER_BMP280;
+  if (str == "bh1750" || str == "lux")                       return AGY_DRIVER_BH1750;
+  if (str == "sht30" || str == "sht31")                      return AGY_DRIVER_SHT30;
+  if (str == "aht10" || str == "aht20")                      return AGY_DRIVER_AHT10;
+  if (str == "i2c")                                          return AGY_DRIVER_I2C;
   return AGY_DRIVER_CUSTOM;
 }
 
@@ -120,5 +123,6 @@ struct AgyComponent {
 typedef std::function<void(const String& compId, const String& value)> AgyCommandCallback;
 typedef std::function<void(const String& vPin, const String& value)> AgyVirtualWriteCallback;
 typedef std::function<void(bool isConnected)> AgyConnectionCallback;
+typedef std::function<void(size_t current, size_t total, int percent)> AgyOTAProgressCallback;
 
 #endif // AGY_TYPES_H

@@ -20,7 +20,7 @@ class AgyPortal {
 public:
   AgyPortal() : _server(80) {}
 
-  void start(const char* customApName = nullptr) {
+  void start(const char* customApName = nullptr, const char* customApPass = nullptr) {
     String apName;
     if (customApName && strlen(customApName) > 0) {
       apName = customApName;
@@ -39,11 +39,15 @@ public:
       apName.toUpperCase();
     }
 
-    Serial.printf("\n[PORTAL] Mengaktifkan AP: %s (IP: 192.168.4.1)\n", apName.c_str());
-
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-    WiFi.softAP(apName.c_str());
+    if (customApPass && strlen(customApPass) >= 8) {
+      WiFi.softAP(apName.c_str(), customApPass);
+      Serial.printf("\n[PORTAL] Mengaktifkan AP Terproteksi: %s (Pass: %s, IP: 192.168.4.1)\n", apName.c_str(), customApPass);
+    } else {
+      WiFi.softAP(apName.c_str());
+      Serial.printf("\n[PORTAL] Mengaktifkan AP Terbuka: %s (IP: 192.168.4.1)\n", apName.c_str());
+    }
 
     _dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
     _dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
@@ -69,6 +73,7 @@ public:
       _server.stop();
       _dnsServer.stop();
       WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_STA); // Nonaktifkan mode AP radio seutuhnya
       _active = false;
       Serial.println("[PORTAL] Captive Portal dihentikan.");
     }
@@ -147,6 +152,10 @@ private:
       "<div style='flex:1'><label>Port</label><input type='number' name='port' value='3050' required></div>"
       "<div style='flex:1'><label>WS Path</label><input type='text' name='path' value='/ws' required></div>"
       "</div>"
+      "<div style='margin-bottom:16px;display:flex;align-items:center;gap:8px'>"
+      "<input type='checkbox' id='ssl' name='ssl' value='1' style='width:auto;margin:0'>"
+      "<label for='ssl' style='margin:0;cursor:pointer;text-transform:none;font-size:13px'>Gunakan Koneksi Aman SSL / WSS</label>"
+      "</div>"
       "<label>Device ID</label>"
       "<input type='text' name='devId' placeholder='contoh: node-01' required>"
       "<label>Device Secret Key</label>"
@@ -164,15 +173,61 @@ private:
     String ssid = _server.arg("ssid");
     String pass = _server.arg("pass");
     String host = _server.arg("host");
-    uint16_t port = _server.arg("port").toInt();
+    String portStr = _server.arg("port");
     String path = _server.arg("path");
     String devId = _server.arg("devId");
     String devKey = _server.arg("devKey");
+    bool useSsl = _server.hasArg("ssl") && (_server.arg("ssl") == "1" || _server.arg("ssl") == "on");
 
-    if (port == 0) port = 3050;
+    ssid.trim();
+    pass.trim();
+    host.trim();
+    path.trim();
+    devId.trim();
+    devKey.trim();
+
+    // Sanitasi karakter kontrol yang berpotensi merusak file JSON Flash
+    auto sanitize = [](String& str) {
+      str.replace("\r", "");
+      str.replace("\n", "");
+      str.replace("\"", "");
+      str.replace("\\", "");
+    };
+    sanitize(ssid);
+    sanitize(host);
+    sanitize(devId);
+    sanitize(devKey);
+
+    // Validasi field utama
+    if (ssid.length() == 0 || host.length() == 0 || devId.length() == 0 || devKey.length() == 0) {
+      String errHtml = F(
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Input Tidak Lengkap</title>"
+        "<style>"
+        "body{background:#0f172a;color:#f8fafc;font-family:sans-serif;padding:30px;text-align:center}"
+        ".box{background:#1e293b;border-radius:16px;padding:30px;max-width:400px;margin:auto;border:1px solid #ef4444}"
+        "h3{color:#f87171}"
+        "p{color:#94a3b8;font-size:14px;line-height:1.5}"
+        "a{display:inline-block;margin-top:15px;color:#38bdf8;text-decoration:none;font-weight:bold}"
+        "</style></head><body>"
+        "<div class='box'>"
+        "<h3>❌ Input Belum Lengkap</h3>"
+        "<p>SSID WiFi, Host Gateway, Device ID, dan Device Key wajib diisi!</p>"
+        "<a href='/'>&larr; Kembali ke Form Pengaturan</a>"
+        "</div></body></html>"
+      );
+      _server.send(400, "text/html", errHtml);
+      return;
+    }
+
+    long p = portStr.toInt();
+    uint16_t port = (p > 0 && p <= 65535) ? (uint16_t)p : 3050;
     if (path.length() == 0) path = "/ws";
+    if (!path.startsWith("/")) path = "/" + path;
+    if (port == 443) useSsl = true;
 
-    AgyStorage::saveNetworkConfig(ssid, pass, host, port, path, devId, devKey);
+    AgyStorage::saveNetworkConfig(ssid, pass, host, port, path, devId, devKey, useSsl);
 
     String successHtml = F(
       "<!DOCTYPE html><html><head><meta charset='utf-8'>"

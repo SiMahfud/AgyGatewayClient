@@ -31,30 +31,30 @@ inline bool readDHT(uint8_t pin, bool isDHT22, float& temperature, float& humidi
   // Bagian Kritis Waktu: Nonaktifkan Interrupt sementara
   noInterrupts();
 
-  // Tunggu respon sensor: LOW ~80us lalu HIGH ~80us
-  unsigned long timeout = micros() + 200;
+  // Tunggu respon sensor: LOW ~80us lalu HIGH ~80us (overflow-safe)
+  unsigned long startU = micros();
   while (digitalRead(pin) == HIGH) {
-    if (micros() > timeout) { interrupts(); return false; }
+    if (micros() - startU > 200) { interrupts(); return false; }
   }
-  timeout = micros() + 200;
+  startU = micros();
   while (digitalRead(pin) == LOW) {
-    if (micros() > timeout) { interrupts(); return false; }
+    if (micros() - startU > 200) { interrupts(); return false; }
   }
-  timeout = micros() + 200;
+  startU = micros();
   while (digitalRead(pin) == HIGH) {
-    if (micros() > timeout) { interrupts(); return false; }
+    if (micros() - startU > 200) { interrupts(); return false; }
   }
 
   // Baca 40 bits (5 byte)
   for (int i = 0; i < 40; i++) {
-    timeout = micros() + 200;
+    startU = micros();
     while (digitalRead(pin) == LOW) {
-      if (micros() > timeout) { interrupts(); return false; }
+      if (micros() - startU > 200) { interrupts(); return false; }
     }
     unsigned long t = micros();
-    timeout = micros() + 200;
+    startU = micros();
     while (digitalRead(pin) == HIGH) {
-      if (micros() > timeout) { interrupts(); return false; }
+      if (micros() - startU > 200) { interrupts(); return false; }
     }
     // Jika durasi pulsa HIGH > 40us, maka bit bernilai 1
     if ((micros() - t) > 40) {
@@ -89,28 +89,34 @@ inline bool oneWireReset(uint8_t pin) {
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
   delayMicroseconds(480);
+  noInterrupts();
   pinMode(pin, INPUT_PULLUP);
   delayMicroseconds(70);
   uint8_t presence = digitalRead(pin);
+  interrupts();
   delayMicroseconds(410);
   return (presence == LOW); // LOW menandakan sensor hadir (presence pulse)
 }
 
 inline void oneWireWriteBit(uint8_t pin, uint8_t bit) {
   pinMode(pin, OUTPUT);
+  noInterrupts();
   digitalWrite(pin, LOW);
   delayMicroseconds(bit ? 6 : 60);
   pinMode(pin, INPUT_PULLUP);
   delayMicroseconds(bit ? 64 : 10);
+  interrupts();
 }
 
 inline uint8_t oneWireReadBit(uint8_t pin) {
   pinMode(pin, OUTPUT);
+  noInterrupts();
   digitalWrite(pin, LOW);
   delayMicroseconds(3);
   pinMode(pin, INPUT_PULLUP);
   delayMicroseconds(10);
   uint8_t r = digitalRead(pin);
+  interrupts();
   delayMicroseconds(53);
   return r;
 }
@@ -167,8 +173,9 @@ inline bool readDS18B20(uint8_t pin, float& temperature) {
 // -------------------------------------------------------------------
 // 3. I2C Bus Auto-Scanner & Native Sensor Drivers
 // -------------------------------------------------------------------
-inline std::vector<AgyI2CDeviceInfo> scanI2C(int sdaPin = -1, int sclPin = -1) {
-  std::vector<AgyI2CDeviceInfo> found;
+inline void initI2C(int sdaPin = -1, int sclPin = -1) {
+  static bool i2cInitialized = false;
+  if (i2cInitialized && sdaPin < 0 && sclPin < 0) return;
 
 #if defined(ESP8266)
   if (sdaPin >= 0 && sclPin >= 0) {
@@ -185,6 +192,13 @@ inline std::vector<AgyI2CDeviceInfo> scanI2C(int sdaPin = -1, int sclPin = -1) {
 #else
   Wire.begin();
 #endif
+  i2cInitialized = true;
+}
+
+inline std::vector<AgyI2CDeviceInfo> scanI2C(int sdaPin = -1, int sclPin = -1) {
+  std::vector<AgyI2CDeviceInfo> found;
+
+  initI2C(sdaPin, sclPin);
 
   for (uint8_t addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
@@ -234,8 +248,15 @@ inline std::vector<AgyI2CDeviceInfo> scanI2C(int sdaPin = -1, int sclPin = -1) {
 
 // Driver Native BH1750 (Ambient Light Sensor)
 inline bool readBH1750(float& lux, uint8_t addr = 0x23) {
+  initI2C();
+  // Power ON
   Wire.beginTransmission(addr);
-  Wire.write(0x10); // Continuously H-Resolution Mode
+  Wire.write(0x01);
+  Wire.endTransmission();
+
+  // Continuously H-Resolution Mode
+  Wire.beginTransmission(addr);
+  Wire.write(0x10);
   if (Wire.endTransmission() != 0) return false;
   delay(20);
   Wire.requestFrom((int)addr, 2);
@@ -247,6 +268,7 @@ inline bool readBH1750(float& lux, uint8_t addr = 0x23) {
 
 // Driver Native SHT30 / SHT31 (Sensirion Temp & Humidity)
 inline bool readSHT3x(float& temp, float& hum, uint8_t addr = 0x44) {
+  initI2C();
   Wire.beginTransmission(addr);
   Wire.write(0x2C); // High repeatability measurement command
   Wire.write(0x06);
@@ -265,6 +287,7 @@ inline bool readSHT3x(float& temp, float& hum, uint8_t addr = 0x44) {
 
 // Driver Native AHT10 / AHT20 (Temp & Humidity)
 inline bool readAHTx(float& temp, float& hum, uint8_t addr = 0x38) {
+  initI2C();
   Wire.beginTransmission(addr);
   Wire.write(0xAC); // Trigger measurement
   Wire.write(0x33);
@@ -284,16 +307,70 @@ inline bool readAHTx(float& temp, float& hum, uint8_t addr = 0x38) {
   return true;
 }
 
-// Driver Native BMP280 (Temperature & Pressure)
+// Kalibrasi resmi Bosch Sensortec BMP280
+struct BMP280Calib {
+  uint16_t dig_T1 = 0;
+  int16_t  dig_T2 = 0;
+  int16_t  dig_T3 = 0;
+  uint16_t dig_P1 = 0;
+  int16_t  dig_P2 = 0;
+  int16_t  dig_P3 = 0;
+  int16_t  dig_P4 = 0;
+  int16_t  dig_P5 = 0;
+  int16_t  dig_P6 = 0;
+  int16_t  dig_P7 = 0;
+  int16_t  dig_P8 = 0;
+  int16_t  dig_P9 = 0;
+  bool loaded = false;
+};
+
+inline bool readBMP280Calib(uint8_t addr, BMP280Calib& cal) {
+  Wire.beginTransmission(addr);
+  Wire.write(0x88);
+  if (Wire.endTransmission() != 0) return false;
+
+  Wire.requestFrom((int)addr, 24);
+  if (Wire.available() < 24) return false;
+
+  uint8_t b[24];
+  for (int i = 0; i < 24; i++) {
+    b[i] = Wire.read();
+  }
+
+  cal.dig_T1 = (uint16_t)(b[1] << 8 | b[0]);
+  cal.dig_T2 = (int16_t)(b[3] << 8 | b[2]);
+  cal.dig_T3 = (int16_t)(b[5] << 8 | b[4]);
+  cal.dig_P1 = (uint16_t)(b[7] << 8 | b[6]);
+  cal.dig_P2 = (int16_t)(b[9] << 8 | b[8]);
+  cal.dig_P3 = (int16_t)(b[11] << 8 | b[10]);
+  cal.dig_P4 = (int16_t)(b[13] << 8 | b[12]);
+  cal.dig_P5 = (int16_t)(b[15] << 8 | b[14]);
+  cal.dig_P6 = (int16_t)(b[17] << 8 | b[16]);
+  cal.dig_P7 = (int16_t)(b[19] << 8 | b[18]);
+  cal.dig_P8 = (int16_t)(b[21] << 8 | b[20]);
+  cal.dig_P9 = (int16_t)(b[23] << 8 | b[22]);
+  cal.loaded = true;
+  return true;
+}
+
+// Driver Native BMP280 (Temperature & Pressure) dengan Kompensasi Penuh Bosch
 inline bool readBMP280(float& temp, float& pressureHpa, uint8_t addr = 0x76) {
-  // Inisialisasi kontrol jika belum aktif
+  initI2C();
+  static BMP280Calib cal76;
+  static BMP280Calib cal77;
+  BMP280Calib& cal = (addr == 0x77) ? cal77 : cal76;
+  if (!cal.loaded) {
+    if (!readBMP280Calib(addr, cal)) return false;
+  }
+
+  // Inisialisasi kontrol: Normal mode, osrs_t x1, osrs_p x1
   Wire.beginTransmission(addr);
   Wire.write(0xF4); // ctrl_meas
-  Wire.write(0x27); // Normal mode, temp x1, press x1
+  Wire.write(0x27); // Normal mode (11), temp x1 (001), press x1 (001)
   if (Wire.endTransmission() != 0) return false;
   delay(10);
 
-  // Baca raw temperature (0xFA..0xFC)
+  // Baca raw data 0xF7..0xFC (6 byte)
   Wire.beginTransmission(addr);
   Wire.write(0xF7);
   if (Wire.endTransmission() != 0) return false;
@@ -307,14 +384,39 @@ inline bool readBMP280(float& temp, float& pressureHpa, uint8_t addr = 0x76) {
   uint32_t tLsb = Wire.read();
   uint32_t tXlsb = Wire.read();
 
-  int32_t adcT = (tMsb << 12) | (tLsb << 4) | (tXlsb >> 4);
-  int32_t adcP = (pMsb << 12) | (pLsb << 4) | (pXlsb >> 4);
+  int32_t adcT = (int32_t)((tMsb << 12) | (tLsb << 4) | (tXlsb >> 4));
+  int32_t adcP = (int32_t)((pMsb << 12) | (pLsb << 4) | (pXlsb >> 4));
 
-  // Formula pendekatan praktis tanpa membaca 24-byte kalibrasi tabel
-  // (Jika perlu kalibrasi penuh, pengguna dapat menggunakan library resmi Bosch)
-  temp = (float)(adcT - 128000) / 5120.0f;
-  pressureHpa = (float)adcP / 256.0f;
-  return (temp >= -40.0f && temp <= 85.0f);
+  if (adcT == 0x80000 || adcP == 0x80000) return false;
+
+  // Rumus kompensasi suhu resmi Bosch Sensortec BMP280
+  double var1 = (((double)adcT) / 16384.0 - ((double)cal.dig_T1) / 1024.0) * ((double)cal.dig_T2);
+  double var2 = ((((double)adcT) / 131072.0 - ((double)cal.dig_T1) / 8192.0) *
+                 (((double)adcT) / 131072.0 - ((double)cal.dig_T1) / 8192.0)) * ((double)cal.dig_T3);
+  double t_fine = var1 + var2;
+  temp = (float)(t_fine / 5120.0);
+
+  // Rumus kompensasi tekanan resmi Bosch Sensortec BMP280
+  var1 = (t_fine / 2.0) - 64000.0;
+  var2 = var1 * var1 * ((double)cal.dig_P6) / 32768.0;
+  var2 = var2 + var1 * ((double)cal.dig_P5) * 2.0;
+  var2 = (var2 / 4.0) + (((double)cal.dig_P4) * 65536.0);
+  var1 = (((double)cal.dig_P3) * var1 * var1 / 524288.0 + ((double)cal.dig_P2) * var1) / 524288.0;
+  var1 = (1.0 + var1 / 32768.0) * ((double)cal.dig_P1);
+  if (var1 == 0.0) {
+    pressureHpa = 0.0f;
+    return false;
+  }
+
+  double p = 1048576.0 - (double)adcP;
+  p = (p - (var2 / 4096.0)) * 6250.0 / var1;
+  var1 = ((double)cal.dig_P9) * p * p / 2147483648.0;
+  var2 = p * ((double)cal.dig_P8) / 32768.0;
+  p = p + (var1 + var2 + ((double)cal.dig_P7)) / 16.0;
+
+  pressureHpa = (float)(p / 100.0); // Konversi Pascal ke hPa
+
+  return (temp >= -40.0f && temp <= 85.0f && pressureHpa >= 300.0f && pressureHpa <= 1100.0f);
 }
 
 } // namespace AgyDrivers

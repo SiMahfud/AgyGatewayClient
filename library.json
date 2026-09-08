@@ -1,6 +1,6 @@
 {
   "name": "AgyGatewayClient",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Universal Modular IoT Client Library for ESP8266 & ESP32 connecting to Personal Gateway Server with Dynamic Components, Virtual Pins, and OTA Support",
   "keywords": [
     "iot",
