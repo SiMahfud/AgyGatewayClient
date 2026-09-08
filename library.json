@@ -1,0 +1,27 @@
+{
+  "name": "AgyGatewayClient",
+  "version": "1.0.0",
+  "description": "Universal Modular IoT Client Library for ESP8266 & ESP32 connecting to Personal Gateway Server with Dynamic Components, Virtual Pins, and OTA Support",
+  "keywords": [
+    "iot",
+    "gateway",
+    "blynk-alternative",
+    "esp8266",
+    "esp32",
+    "websocket",
+    "smart-home",
+    "ota"
+  ],
+  "authors": [
+    {
+      "name": "Agy IoT Team",
+      "maintainer": true
+    }
+  ],
+  "frameworks": ["arduino"],
+  "platforms": ["espressif8266", "espressif32"],
+  "dependencies": {
+    "bblanchon/ArduinoJson": "^7.0.4",
+    "links2004/WebSockets": "^2.4.1"
+  }
+}
