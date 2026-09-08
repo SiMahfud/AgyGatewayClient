@@ -24,9 +24,8 @@ monitor_speed = 115200
 
 lib_deps = 
     https://github.com/SiMahfud/AgyGatewayClient.git
-    bblanchon/ArduinoJson @ ^7.0.4
-    links2004/WebSockets @ ^2.4.1
 ```
+*(PlatformIO akan secara otomatis mengunduh dependensi `ArduinoJson` dan `WebSockets` dari `library.json`)*.
 
 ### B. Arduino IDE
 1. Download repository ini sebagai file `.ZIP` (klik tombol hijau **Code** > **Download ZIP** di GitHub).
