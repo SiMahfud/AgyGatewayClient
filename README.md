@@ -10,8 +10,9 @@ Library Arduino & PlatformIO universal yang dirancang untuk menghubungkan mikrok
 
 ---
 
-## 📦 Instalasi di PlatformIO
+## 📦 Cara Instalasi
 
+### A. PlatformIO (Rekomendasi)
 Tambahkan dependensi pada `platformio.ini`:
 
 ```ini
@@ -22,10 +23,17 @@ framework = arduino
 monitor_speed = 115200
 
 lib_deps = 
-    https://github.com/username-anda/AgyGatewayClient.git
+    https://github.com/SiMahfud/AgyGatewayClient.git
     bblanchon/ArduinoJson @ ^7.0.4
     links2004/WebSockets @ ^2.4.1
 ```
+
+### B. Arduino IDE
+1. Download repository ini sebagai file `.ZIP` (klik tombol hijau **Code** > **Download ZIP** di GitHub).
+2. Buka **Arduino IDE**.
+3. Masuk ke menu **Sketch** > **Include Library** > **Add .ZIP Library...**.
+4. Pilih file `.ZIP` yang baru di-download.
+5. Pastikan dependensi **ArduinoJson** (v7+) dan **WebSockets** (oleh Markus Sattler) sudah terinstal via Library Manager Arduino IDE.
 
 ---
 
