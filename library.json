@@ -12,9 +12,11 @@
     "smart-home",
     "ota"
   ],
+  "homepage": "https://github.com/SiMahfud/AgyGatewayClient",
   "authors": [
     {
-      "name": "Agy IoT Team",
+      "name": "SiMahfud",
+      "url": "https://github.com/SiMahfud",
       "maintainer": true
     }
   ],
