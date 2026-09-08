@@ -39,7 +39,11 @@ enum AgyDriverType {
   AGY_DRIVER_DHT11,       // Sensor Suhu & Kelembapan DHT11
   AGY_DRIVER_DHT22,       // Sensor Suhu & Kelembapan DHT22 / AM2302
   AGY_DRIVER_DS18B20,     // Sensor Suhu 1-Wire Dallas DS18B20
-  AGY_DRIVER_I2C          // Sensor I2C Cerdas (Auto-Detect)
+  AGY_DRIVER_I2C,         // Sensor I2C Cerdas (Auto-Detect)
+  AGY_DRIVER_BMP280,      // Sensor Suhu & Tekanan BMP280 / BME280
+  AGY_DRIVER_BH1750,      // Sensor Cahaya BH1750 (Lux)
+  AGY_DRIVER_SHT30,       // Sensor Suhu & Kelembapan SHT30 / SHT31
+  AGY_DRIVER_AHT10        // Sensor Suhu & Kelembapan AHT10 / AHT20
 };
 
 inline const char* agyDriverTypeToString(AgyDriverType d) {
@@ -51,6 +55,10 @@ inline const char* agyDriverTypeToString(AgyDriverType d) {
     case AGY_DRIVER_DHT22:      return "dht22";
     case AGY_DRIVER_DS18B20:    return "ds18b20";
     case AGY_DRIVER_I2C:        return "i2c";
+    case AGY_DRIVER_BMP280:     return "bmp280";
+    case AGY_DRIVER_BH1750:     return "bh1750";
+    case AGY_DRIVER_SHT30:      return "sht30";
+    case AGY_DRIVER_AHT10:      return "aht10";
     default:                    return "custom";
   }
 }
@@ -62,6 +70,10 @@ inline AgyDriverType agyStringToDriverType(const String& str) {
   if (str == "dht11")                        return AGY_DRIVER_DHT11;
   if (str == "dht22" || str == "am2302")     return AGY_DRIVER_DHT22;
   if (str == "ds18b20" || str == "onewire")  return AGY_DRIVER_DS18B20;
+  if (str == "bmp280" || str == "bme280")    return AGY_DRIVER_BMP280;
+  if (str == "bh1750" || str == "lux")       return AGY_DRIVER_BH1750;
+  if (str == "sht30" || str == "sht31")      return AGY_DRIVER_SHT30;
+  if (str == "aht10" || str == "aht20")      return AGY_DRIVER_AHT10;
   if (str == "i2c")                          return AGY_DRIVER_I2C;
   return AGY_DRIVER_CUSTOM;
 }
@@ -87,7 +99,11 @@ struct AgyComponent {
   int pin = -1;                       // Pin GPIO fisik (-1 jika virtual)
   bool activeLow = true;              // Khusus relay (active LOW)
   bool pullup = true;                 // Khusus digital input (INPUT_PULLUP)
-  int lastDigitalVal = -1;            // Deteksi perubahan input fisik
+  int lastDigitalVal = -1;            // Deteksi perubahan input fisik mentah
+  int debouncedVal = -1;              // Nilai stabil setelah filter debounce
+  unsigned long lastDebounceTime = 0; // Timestamp perubahan terakhir
+  unsigned long debounceDelay = 50;   // Threshold debounce (default 50ms)
+  uint8_t i2cAddress = 0;             // Alamat I2C jika tipe modul I2C
   bool isChanged = false;             // Flag apakah nilai berubah & butuh dikirim ke server
   bool isDynamic = false;             // Komponen dikonfigurasi secara dinamis via Web UI
 

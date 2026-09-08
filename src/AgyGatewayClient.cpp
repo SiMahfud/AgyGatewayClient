@@ -1,6 +1,7 @@
 #include "AgyGatewayClient.h"
 
 AgyGatewayClient::AgyGatewayClient() {
+  _components.reserve(16); // Cegah relokasi memori berlebih dan dangling pointer
 }
 
 void AgyGatewayClient::begin(const char* ssid, const char* pass, const char* wsHost, uint16_t wsPort, const char* wsPath, const char* deviceId, const char* deviceKey, bool useSsl) {
@@ -23,7 +24,7 @@ void AgyGatewayClient::begin(const char* ssid, const char* pass, const char* wsU
   _deviceId = deviceId;
   _deviceKey = deviceKey;
 
-  // Sederhana: parse URL jika ada format "ws://" atau "wss://"
+  // Parse URL jika ada format "ws://" atau "wss://"
   String url = String(wsUrl);
   _useSsl = url.startsWith("wss://") || url.startsWith("https://");
 
@@ -51,10 +52,101 @@ void AgyGatewayClient::begin(const char* ssid, const char* pass, const char* wsU
   initWebSocket();
 }
 
+bool AgyGatewayClient::autoConnect(const char* apName, uint32_t timeoutSec) {
+  enableStatusLed();
+
+  String ssid, pass, host, path, devId, devKey;
+  uint16_t port = 3050;
+
+  bool hasConfig = AgyStorage::loadNetworkConfig(ssid, pass, host, port, path, devId, devKey);
+  if (hasConfig) {
+    Serial.printf("[AUTOCONNECT] Konfigurasi Flash ditemukan: SSID=%s, Host=%s:%d\n", 
+      ssid.c_str(), host.c_str(), port);
+    begin(ssid.c_str(), pass.c_str(), host.c_str(), port, path.c_str(), devId.c_str(), devKey.c_str());
+
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - start < timeoutSec * 1000)) {
+      updateStatusLed();
+      delay(100);
+      yield();
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("[AUTOCONNECT] Berhasil tersambung ke WiFi!");
+      return true;
+    }
+    Serial.println("[AUTOCONNECT] Gagal menyambung ke WiFi tersimpan dalam batas waktu.");
+  } else {
+    Serial.println("[AUTOCONNECT] Belum ada konfigurasi jaringan di Flash.");
+  }
+
+  // Nyalakan Captive Portal
+  startPortal(apName);
+  return false;
+}
+
+void AgyGatewayClient::startPortal(const char* apName) {
+  _portalActive = true;
+  _portal.start(apName);
+}
+
+void AgyGatewayClient::enableStatusLed(int pin, bool activeLow) {
+  _statusLedPin = pin;
+  _statusLedActiveLow = activeLow;
+  pinMode(_statusLedPin, OUTPUT);
+  digitalWrite(_statusLedPin, _statusLedActiveLow ? HIGH : LOW); // Matikan awal
+}
+
+void AgyGatewayClient::disableStatusLed() {
+  if (_statusLedPin >= 0) {
+    digitalWrite(_statusLedPin, _statusLedActiveLow ? HIGH : LOW);
+    _statusLedPin = -1;
+  }
+}
+
+void AgyGatewayClient::updateStatusLed() {
+  if (_statusLedPin < 0) return;
+
+  unsigned long now = millis();
+  unsigned long interval = 1000;
+
+  if (_portalActive) {
+    interval = 100; // Kedip sangat cepat: mode AP Captive Portal aktif
+  } else if (WiFi.status() != WL_CONNECTED) {
+    interval = 250; // Kedip cepat: mencari/menghubungkan WiFi
+  } else if (!_wsConnected) {
+    interval = 600; // Kedip lambat: WiFi tersambung, mencari Gateway Server
+  } else {
+    // Siap & terhubung: LED mati (agar tidak silau)
+    digitalWrite(_statusLedPin, _statusLedActiveLow ? HIGH : LOW);
+    return;
+  }
+
+  if (now - _lastLedBlink >= interval) {
+    _lastLedBlink = now;
+    _ledCurrentState = !_ledCurrentState;
+    digitalWrite(_statusLedPin, _statusLedActiveLow ? (_ledCurrentState ? LOW : HIGH) : (_ledCurrentState ? HIGH : LOW));
+  }
+}
+
 void AgyGatewayClient::setupWiFi() {
   Serial.printf("[WIFI] Menyambungkan ke: %s\n", _ssid.c_str());
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(_ssid.c_str(), _pass.c_str());
+}
+
+void AgyGatewayClient::checkWiFiConnection() {
+  if (_portalActive) return;
+
+  unsigned long now = millis();
+  if (now - _lastWifiCheck >= _wifiCheckInterval) {
+    _lastWifiCheck = now;
+    if (_ssid.length() > 0 && WiFi.status() != WL_CONNECTED) {
+      Serial.printf("[WIFI] Memeriksa koneksi WiFi... Reconnecting ke %s\n", _ssid.c_str());
+      WiFi.reconnect();
+    }
+  }
 }
 
 void AgyGatewayClient::initWebSocket() {
@@ -62,11 +154,7 @@ void AgyGatewayClient::initWebSocket() {
     _wsHost.c_str(), _wsPort, _wsPath.c_str(), _useSsl ? "YES" : "NO");
 
   if (_useSsl) {
-#if defined(ESP8266)
     _ws.beginSSL(_wsHost.c_str(), _wsPort, _wsPath.c_str());
-#else
-    _ws.beginSSL(_wsHost.c_str(), _wsPort, _wsPath.c_str());
-#endif
   } else {
     _ws.begin(_wsHost.c_str(), _wsPort, _wsPath.c_str());
   }
@@ -80,7 +168,24 @@ void AgyGatewayClient::initWebSocket() {
 }
 
 void AgyGatewayClient::loop() {
-  // 1. Cek status koneksi WiFi
+  // 0. Update Pola Kedip Status LED
+  updateStatusLed();
+
+  // 0b. Handler Captive Portal jika aktif
+  if (_portalActive) {
+    _portal.loop();
+    if (_portal.isSaved()) {
+      Serial.println("[PORTAL] Konfigurasi baru tersimpan! Me-restart modul dalam 1 detik...");
+      delay(1000);
+      ESP.restart();
+    }
+    return;
+  }
+
+  // 1. Jaga koneksi WiFi secara non-blocking
+  checkWiFiConnection();
+
+  // 1b. Polling WebSocket
   if (WiFi.status() == WL_CONNECTED) {
     _ws.loop();
   }
@@ -94,13 +199,13 @@ void AgyGatewayClient::loop() {
     checkDynamicSensors();
   }
 
-  // 3. Cek timer countdown pada switch
+  // 3. Cek timer countdown pada switch (overflow-safe)
   checkCountdownTimers();
 
-  // 4. Heartbeat berkala (lapor status / telemetri jika terhubung)
+  // 4. Heartbeat berkala (Full Telemetry Sync setiap 30 detik)
   if (_wsConnected && (millis() - _lastHeartbeat > _heartbeatInterval)) {
     _lastHeartbeat = millis();
-    sendTelemetry();
+    sendFullTelemetry();
   }
 }
 
@@ -112,6 +217,7 @@ AgyComponent* AgyGatewayClient::addSwitch(const String& id, int pin, const Strin
   comp.id = id;
   comp.name = name.length() > 0 ? name : id;
   comp.type = AGY_SWITCH;
+  comp.driverType = AGY_DRIVER_SWITCH;
   comp.access = "rw";
   comp.unit = "";
   comp.pin = pin;
@@ -132,6 +238,7 @@ AgyComponent* AgyGatewayClient::addSensor(const String& id, const String& name, 
   comp.id = id;
   comp.name = name.length() > 0 ? name : id;
   comp.type = AGY_SENSOR;
+  comp.driverType = AGY_DRIVER_CUSTOM;
   comp.access = "r";
   comp.unit = unit;
   comp.value = "0";
@@ -139,7 +246,6 @@ AgyComponent* AgyGatewayClient::addSensor(const String& id, const String& name, 
   comp.readIntervalMs = intervalMs;
   comp.lastReadMs = millis();
 
-  // Baca pertama kali jika ada fungsi
   if (readFn) {
     float val = readFn();
     comp.value = String(val, 2);
@@ -165,7 +271,7 @@ void AgyGatewayClient::updateSensor(const String& id, const String& value) {
       comp->value = value;
       comp->isChanged = true;
       if (_wsConnected) {
-        sendTelemetry();
+        sendTelemetry(); // Delta Telemetry
       }
     }
   }
@@ -178,7 +284,7 @@ void AgyGatewayClient::setSwitchState(const String& id, bool state) {
     comp->value = state ? "true" : "false";
     comp->isChanged = true;
     if (_wsConnected) {
-      sendTelemetry();
+      sendTelemetry(); // Delta Telemetry
     }
   }
 }
@@ -284,13 +390,12 @@ void AgyGatewayClient::processIncomingJson(const String& jsonStr) {
         applySwitchState(*comp, state);
         comp->value = state ? "true" : "false";
 
-        // Handle countdown timer jika ada durasi
         if (duration > 0 && state) {
           comp->timer.active = true;
           comp->timer.startMs = millis();
           comp->timer.durationMs = duration * 1000;
           comp->timer.endTimeMs = millis() + (duration * 1000);
-          comp->timer.targetState = false; // Matikan saat selesai
+          comp->timer.targetState = false;
           Serial.printf("[TIMER] Timer aktif untuk %s selama %lu detik\n", compId.c_str(), duration);
         } else {
           comp->timer.active = false;
@@ -300,9 +405,8 @@ void AgyGatewayClient::processIncomingJson(const String& jsonStr) {
       }
 
       comp->isChanged = true;
-      sendTelemetry();
+      sendTelemetry(); // Delta Telemetry
 
-      // Trigger user command callback jika ada
       if (_commandCallback) {
         _commandCallback(compId, valStr);
       }
@@ -310,7 +414,7 @@ void AgyGatewayClient::processIncomingJson(const String& jsonStr) {
     return;
   }
 
-  // 2. Backwards-compatibility: Format 'set_relay' dari controller lama
+  // 2. Backwards-compatibility: Format 'set_relay'
   if (strcmp(action, "set_relay") == 0) {
     int channel = doc["channel"] | 0;
     bool state = doc["state"] | false;
@@ -389,6 +493,7 @@ void AgyGatewayClient::processIncomingJson(const String& jsonStr) {
 
   if (strcmp(action, "configure_pin") == 0) {
     configurePin(doc.as<JsonObject>());
+    savePinConfigToStorage();
     sendRegisterManifest();
     return;
   }
@@ -428,7 +533,7 @@ void AgyGatewayClient::checkSensorIntervals() {
   }
 
   if (anyChanged && _wsConnected) {
-    sendTelemetry();
+    sendTelemetry(); // Delta Telemetry
   }
 }
 
@@ -437,7 +542,8 @@ void AgyGatewayClient::checkCountdownTimers() {
   for (size_t i = 0; i < _components.size(); i++) {
     AgyComponent& comp = _components[i];
     if (comp.type == AGY_SWITCH && comp.timer.active) {
-      if (now >= comp.timer.endTimeMs) {
+      // Perhitungan aman dari overflow millis()
+      if ((long)(now - comp.timer.endTimeMs) >= 0) {
         Serial.printf("[TIMER] Selesai untuk %s! Mematikan switch...\n", comp.id.c_str());
         comp.timer.active = false;
         applySwitchState(comp, comp.timer.targetState);
@@ -455,6 +561,32 @@ void AgyGatewayClient::checkCountdownTimers() {
 void AgyGatewayClient::enableDynamicPins(bool enable) {
   _dynamicPinsEnabled = enable;
   Serial.printf("[DYNAMIC PINS] Status: %s\n", enable ? "ENABLED" : "DISABLED");
+  if (enable) {
+    loadPinConfigFromStorage();
+  }
+}
+
+void AgyGatewayClient::loadPinConfigFromStorage() {
+  JsonDocument doc;
+  if (AgyStorage::loadPinConfig(doc)) {
+    JsonArray arr = doc.as<JsonArray>();
+    Serial.printf("[STORAGE] Memulihkan %d pin dari Flash...\n", (int)arr.size());
+    for (JsonObject item : arr) {
+      configurePin(item);
+    }
+  }
+}
+
+void AgyGatewayClient::savePinConfigToStorage() {
+  AgyStorage::savePinConfig(_components);
+}
+
+void AgyGatewayClient::clearPinStorage() {
+  AgyStorage::clearPinConfig();
+}
+
+void AgyGatewayClient::clearAllStorage() {
+  AgyStorage::clearAll();
 }
 
 bool AgyGatewayClient::configurePin(const JsonObject& doc) {
@@ -469,6 +601,7 @@ bool AgyGatewayClient::configurePin(const JsonObject& doc) {
   bool pullup = doc["pullup"].isNull() ? true : doc["pullup"].as<bool>();
   String unit = doc["unit"] | "";
   unsigned long interval = doc["interval"] | doc["readIntervalMs"] | 5000;
+  uint8_t i2cAddr = doc["i2cAddr"] | 0;
 
   AgyComponent* comp = findComponent(id);
   if (!comp) {
@@ -486,6 +619,7 @@ bool AgyGatewayClient::configurePin(const JsonObject& doc) {
   comp->unit = unit;
   comp->readIntervalMs = interval;
   comp->isDynamic = true;
+  comp->i2cAddress = i2cAddr;
   comp->driverType = agyStringToDriverType(driverStr);
 
   if (comp->driverType == AGY_DRIVER_SWITCH) {
@@ -502,12 +636,13 @@ bool AgyGatewayClient::configurePin(const JsonObject& doc) {
     if (pin >= 0) {
       pinMode(pin, pullup ? INPUT_PULLUP : INPUT);
       comp->lastDigitalVal = digitalRead(pin);
-      comp->value = (comp->lastDigitalVal == (activeLow ? LOW : HIGH)) ? "1" : "0";
+      comp->debouncedVal = comp->lastDigitalVal;
+      comp->value = (comp->debouncedVal == (activeLow ? LOW : HIGH)) ? "1" : "0";
     }
   } else if (comp->driverType == AGY_DRIVER_ANALOG) {
     comp->type = AGY_SENSOR;
     comp->access = "r";
-    if (unit.length() == 0) comp->unit = "";
+    if (unit.length() == 0) comp->unit = "ADC";
   } else if (comp->driverType == AGY_DRIVER_DHT11 || comp->driverType == AGY_DRIVER_DHT22) {
     comp->type = AGY_SENSOR;
     comp->access = "r";
@@ -522,6 +657,14 @@ bool AgyGatewayClient::configurePin(const JsonObject& doc) {
     if (pin >= 0) {
       pinMode(pin, INPUT_PULLUP);
     }
+  } else if (comp->driverType == AGY_DRIVER_BH1750) {
+    comp->type = AGY_SENSOR;
+    comp->access = "r";
+    if (unit.length() == 0) comp->unit = "Lux";
+  } else if (comp->driverType == AGY_DRIVER_SHT30 || comp->driverType == AGY_DRIVER_AHT10 || comp->driverType == AGY_DRIVER_BMP280) {
+    comp->type = AGY_SENSOR;
+    comp->access = "r";
+    if (unit.length() == 0) comp->unit = "°C";
   } else {
     comp->type = agyStringToComponentType(typeStr);
   }
@@ -536,8 +679,9 @@ bool AgyGatewayClient::applyPinConfig(const JsonArray& compArray) {
   for (JsonObject item : compArray) {
     configurePin(item);
   }
+  savePinConfigToStorage();
   sendRegisterManifest();
-  sendTelemetry();
+  sendFullTelemetry();
   return true;
 }
 
@@ -546,6 +690,7 @@ bool AgyGatewayClient::removePin(const String& compId) {
     if (it->id == compId) {
       Serial.printf("[PIN MGR] Menghapus pin %s\n", compId.c_str());
       _components.erase(it);
+      savePinConfigToStorage();
       sendRegisterManifest();
       return true;
     }
@@ -578,16 +723,26 @@ void AgyGatewayClient::scanAndReportI2C(int sdaPin, int sclPin) {
 }
 
 void AgyGatewayClient::checkDigitalInputs() {
+  unsigned long now = millis();
   for (size_t i = 0; i < _components.size(); i++) {
     AgyComponent& comp = _components[i];
     if (comp.driverType == AGY_DRIVER_DIGITAL_IN && comp.pin >= 0) {
-      int currentVal = digitalRead(comp.pin);
-      if (currentVal != comp.lastDigitalVal) {
-        comp.lastDigitalVal = currentVal;
-        comp.value = (currentVal == (comp.activeLow ? LOW : HIGH)) ? "1" : "0";
-        comp.isChanged = true;
-        Serial.printf("[DIGITAL IN] %s (Pin %d) berubah -> %s\n", comp.id.c_str(), comp.pin, comp.value.c_str());
-        sendTelemetry();
+      int reading = digitalRead(comp.pin);
+
+      // Filter Debounce Software
+      if (reading != comp.lastDigitalVal) {
+        comp.lastDigitalVal = reading;
+        comp.lastDebounceTime = now;
+      }
+
+      if ((now - comp.lastDebounceTime) >= comp.debounceDelay) {
+        if (reading != comp.debouncedVal) {
+          comp.debouncedVal = reading;
+          comp.value = (reading == (comp.activeLow ? LOW : HIGH)) ? "1" : "0";
+          comp.isChanged = true;
+          Serial.printf("[DIGITAL IN] %s (Pin %d) stabil -> %s\n", comp.id.c_str(), comp.pin, comp.value.c_str());
+          sendTelemetry(); // Delta Telemetry otomatis
+        }
       }
     }
   }
@@ -599,7 +754,7 @@ void AgyGatewayClient::checkDynamicSensors() {
 
   for (size_t i = 0; i < _components.size(); i++) {
     AgyComponent& comp = _components[i];
-    if (!comp.isDynamic || comp.pin < 0) continue;
+    if (!comp.isDynamic) continue;
 
     if (now - comp.lastReadMs >= comp.readIntervalMs) {
       comp.lastReadMs = now;
@@ -608,20 +763,49 @@ void AgyGatewayClient::checkDynamicSensors() {
       if (comp.driverType == AGY_DRIVER_ANALOG) {
 #if defined(ESP8266)
         int raw = analogRead(A0);
-#else
-        int raw = analogRead(comp.pin);
-#endif
         newVal = String(raw);
+#elif defined(ESP32)
+        if (comp.pin >= 0) {
+          // Peringatan ADC2 pada ESP32 saat WiFi aktif
+          if ((comp.pin >= 0 && comp.pin <= 4) || (comp.pin >= 12 && comp.pin <= 15) || (comp.pin >= 25 && comp.pin <= 27)) {
+            Serial.printf("[ADC WARN] Pin GPIO %d adalah ADC2, dapat konflik dengan WiFi ESP32!\n", comp.pin);
+          }
+          int raw = analogRead(comp.pin);
+          newVal = String(raw);
+        }
+#endif
       } else if (comp.driverType == AGY_DRIVER_DHT11 || comp.driverType == AGY_DRIVER_DHT22) {
         float temp = 0.0f, hum = 0.0f;
-        bool ok = AgyDrivers::readDHT(comp.pin, comp.driverType == AGY_DRIVER_DHT22, temp, hum);
-        if (ok) {
+        if (comp.pin >= 0 && AgyDrivers::readDHT(comp.pin, comp.driverType == AGY_DRIVER_DHT22, temp, hum)) {
           newVal = String(temp, 1);
         }
       } else if (comp.driverType == AGY_DRIVER_DS18B20) {
         float temp = 0.0f;
-        bool ok = AgyDrivers::readDS18B20(comp.pin, temp);
-        if (ok) {
+        if (comp.pin >= 0 && AgyDrivers::readDS18B20(comp.pin, temp)) {
+          newVal = String(temp, 1);
+        }
+      } else if (comp.driverType == AGY_DRIVER_BH1750) {
+        float lux = 0.0f;
+        uint8_t addr = (comp.i2cAddress > 0) ? comp.i2cAddress : 0x23;
+        if (AgyDrivers::readBH1750(lux, addr)) {
+          newVal = String(lux, 1);
+        }
+      } else if (comp.driverType == AGY_DRIVER_SHT30) {
+        float temp = 0.0f, hum = 0.0f;
+        uint8_t addr = (comp.i2cAddress > 0) ? comp.i2cAddress : 0x44;
+        if (AgyDrivers::readSHT3x(temp, hum, addr)) {
+          newVal = String(temp, 1);
+        }
+      } else if (comp.driverType == AGY_DRIVER_AHT10) {
+        float temp = 0.0f, hum = 0.0f;
+        uint8_t addr = (comp.i2cAddress > 0) ? comp.i2cAddress : 0x38;
+        if (AgyDrivers::readAHTx(temp, hum, addr)) {
+          newVal = String(temp, 1);
+        }
+      } else if (comp.driverType == AGY_DRIVER_BMP280) {
+        float temp = 0.0f, press = 0.0f;
+        uint8_t addr = (comp.i2cAddress > 0) ? comp.i2cAddress : 0x76;
+        if (AgyDrivers::readBMP280(temp, press, addr)) {
           newVal = String(temp, 1);
         }
       }
@@ -635,7 +819,7 @@ void AgyGatewayClient::checkDynamicSensors() {
   }
 
   if (anyChanged && _wsConnected) {
-    sendTelemetry();
+    sendTelemetry(); // Delta Telemetry
   }
 }
 
@@ -658,7 +842,7 @@ void AgyGatewayClient::sendRegisterManifest() {
 #else
   info["chip"] = "Arduino";
 #endif
-  info["firmware"] = "1.1.0";
+  info["firmware"] = AGY_GATEWAY_CLIENT_VERSION;
   info["uptime"] = millis() / 1000;
   info["rssi"] = WiFi.RSSI();
   info["dynamicPins"] = _dynamicPinsEnabled;
@@ -679,6 +863,9 @@ void AgyGatewayClient::sendRegisterManifest() {
     if (c.pin >= 0) {
       item["pin"] = c.pin;
     }
+    if (c.i2cAddress > 0) {
+      item["i2cAddr"] = c.i2cAddress;
+    }
     if (c.type == AGY_SWITCH && c.timer.active) {
       JsonObject tmr = item["timer"].to<JsonObject>();
       tmr["active"] = true;
@@ -691,25 +878,38 @@ void AgyGatewayClient::sendRegisterManifest() {
   String output;
   serializeJson(doc, output);
   _ws.sendTXT(output);
-  Serial.printf("[WS MANIFEST] Terkirim (%d komponen, Dynamic: %s)\n", 
-    (int)_components.size(), _dynamicPinsEnabled ? "YES" : "NO");
+  Serial.printf("[WS MANIFEST] Terkirim (%d komponen, Dynamic: %s, FW: %s)\n", 
+    (int)_components.size(), _dynamicPinsEnabled ? "YES" : "NO", AGY_GATEWAY_CLIENT_VERSION);
 }
 
-void AgyGatewayClient::sendTelemetry() {
+void AgyGatewayClient::sendTelemetry(bool forceAll) {
   if (!_wsConnected) return;
 
   JsonDocument doc;
+  JsonObject data = doc["data"].to<JsonObject>();
+  size_t changedCount = 0;
+
+  for (size_t i = 0; i < _components.size(); i++) {
+    AgyComponent& c = _components[i];
+    if (forceAll || c.isChanged) {
+      data[c.id] = c.value;
+      c.isChanged = false;
+      changedCount++;
+    }
+  }
+
+  // Jika Delta Telemetry dan tidak ada komponen yang berubah, batalkan transmisi
+  if (!forceAll && changedCount == 0) {
+    return;
+  }
+
   doc["event"] = "telemetry";
   doc["deviceId"] = _deviceId;
   doc["key"] = _deviceKey;
   doc["uptime"] = millis() / 1000;
   doc["rssi"] = WiFi.RSSI();
-
-  JsonObject data = doc["data"].to<JsonObject>();
-  for (size_t i = 0; i < _components.size(); i++) {
-    AgyComponent& c = _components[i];
-    data[c.id] = c.value;
-    c.isChanged = false;
+  if (!forceAll) {
+    doc["delta"] = true;
   }
 
   String output;

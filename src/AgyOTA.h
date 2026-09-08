@@ -5,9 +5,11 @@
 
 #if defined(ESP8266)
   #include <ESP8266WiFi.h>
+  #include <WiFiClientSecure.h>
   #include <ESP8266httpUpdate.h>
 #elif defined(ESP32)
   #include <WiFi.h>
+  #include <WiFiClientSecure.h>
   #include <HTTPClient.h>
   #include <HTTPUpdate.h>
 #endif
@@ -17,12 +19,20 @@ public:
   static bool updateFromUrl(const String& binUrl) {
     Serial.printf("[OTA] Memulai pembaruan firmware dari: %s\n", binUrl.c_str());
 
-    WiFiClient client;
+    bool isHttps = binUrl.startsWith("https://");
 
 #if defined(ESP8266)
-    // ESP8266 HTTP Update
+    t_httpUpdate_return ret;
     ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
-    t_httpUpdate_return ret = ESPhttpUpdate.update(client, binUrl);
+
+    if (isHttps) {
+      WiFiClientSecure secureClient;
+      secureClient.setInsecure(); // Terima self-signed SSL atau gateway lokal
+      ret = ESPhttpUpdate.update(secureClient, binUrl);
+    } else {
+      WiFiClient client;
+      ret = ESPhttpUpdate.update(client, binUrl);
+    }
 
     switch (ret) {
       case HTTP_UPDATE_FAILED:
@@ -38,9 +48,17 @@ public:
         return true;
     }
 #elif defined(ESP32)
-    // ESP32 HTTP Update
+    t_httpUpdate_return ret;
     httpUpdate.setLedPin(LED_BUILTIN, HIGH);
-    t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
+
+    if (isHttps) {
+      WiFiClientSecure secureClient;
+      secureClient.setInsecure();
+      ret = httpUpdate.update(secureClient, binUrl);
+    } else {
+      WiFiClient client;
+      ret = httpUpdate.update(client, binUrl);
+    }
 
     switch (ret) {
       case HTTP_UPDATE_FAILED:
