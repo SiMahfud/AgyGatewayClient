@@ -27,8 +27,20 @@ public:
     fsInitialized = true;
     return true;
 #elif defined(ESP32)
-    fsInitialized = LittleFS.begin(true);
-    return fsInitialized;
+    if (!LittleFS.begin(true)) {
+      Serial.println("[STORAGE] Gagal mount LittleFS di ESP32. Memformat...");
+      LittleFS.format();
+      fsInitialized = LittleFS.begin(true);
+      if (fsInitialized) {
+        Serial.println("[STORAGE] LittleFS berhasil diformat dan dimount.");
+      } else {
+        Serial.println("[STORAGE ERROR] LittleFS gagal dimount setelah format!");
+      }
+      return fsInitialized;
+    }
+    fsInitialized = true;
+    Serial.println("[STORAGE] LittleFS ESP32 berhasil dimount.");
+    return true;
 #else
     return false;
 #endif
