@@ -113,6 +113,39 @@ private:
       wifiOptions += "<option value='" + ssid + "'>" + ssid + " (" + String(rssi) + " dBm)</option>";
     }
 
+    // Muat konfigurasi tersimpan jika ada, atau buat nilai default cerdas
+    String curSsid, curPass, curHost, curPath, curDevId, curDevKey;
+    uint16_t curPort = 3050;
+    bool curSsl = false;
+    bool hasSaved = AgyStorage::loadNetworkConfig(curSsid, curPass, curHost, curPort, curPath, curDevId, curDevKey, curSsl);
+
+    if (!hasSaved || curDevId.length() == 0) {
+#if defined(ESP8266)
+      curDevId = "node-" + String(ESP.getChipId(), HEX);
+#elif defined(ESP32)
+      uint32_t chipId = 0;
+      for (int i = 0; i < 17; i += 8) {
+        chipId |= ((ESP.getEfuseMac() >> (40 - i)) & 0xff) << i;
+      }
+      curDevId = "node-" + String(chipId, HEX);
+#else
+      curDevId = "node-01";
+#endif
+      curDevId.toLowerCase();
+    }
+
+    if (!hasSaved || curDevKey.length() == 0) {
+      curDevKey = "wemos-secret-key-3377"; // Default secret key server
+    }
+    if (curPort == 0) curPort = 3050;
+    if (curPath.length() == 0) curPath = "/ws";
+
+    auto escapeHtml = [](const String& in) -> String {
+      String s = in;
+      s.replace("\"", "&quot;");
+      return s;
+    };
+
     String html = F(
       "<!DOCTYPE html><html><head><meta charset='utf-8'>"
       "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -142,24 +175,41 @@ private:
     html += F(
       "</select>"
       "<label>WiFi SSID</label>"
-      "<input type='text' id='ssid' name='ssid' placeholder='Nama WiFi' required>"
+    );
+    html += "<input type='text' id='ssid' name='ssid' value='" + escapeHtml(curSsid) + "' placeholder='Nama WiFi' required>";
+    html += F(
       "<label>WiFi Password</label>"
-      "<input type='password' name='pass' placeholder='Password WiFi'>"
+    );
+    html += "<input type='password' name='pass' value='" + escapeHtml(curPass) + "' placeholder='Password WiFi'>";
+    html += F(
       "<hr style='border:0;border-top:1px solid #334155;margin:16px 0'>"
       "<label>Gateway Server Host / IP</label>"
-      "<input type='text' name='host' placeholder='192.168.1.100 atau domain' required>"
+    );
+    html += "<input type='text' name='host' value='" + escapeHtml(curHost) + "' placeholder='192.168.1.100 atau domain' required>";
+    html += F(
       "<div style='display:flex;gap:10px'>"
-      "<div style='flex:1'><label>Port</label><input type='number' name='port' value='3050' required></div>"
-      "<div style='flex:1'><label>WS Path</label><input type='text' name='path' value='/ws' required></div>"
-      "</div>"
+      "<div style='flex:1'><label>Port</label>"
+    );
+    html += "<input type='number' name='port' value='" + String(curPort) + "' required></div>";
+    html += F(
+      "<div style='flex:1'><label>WS Path</label>"
+    );
+    html += "<input type='text' name='path' value='" + escapeHtml(curPath) + "' required></div></div>";
+    html += F(
       "<div style='margin-bottom:16px;display:flex;align-items:center;gap:8px'>"
-      "<input type='checkbox' id='ssl' name='ssl' value='1' style='width:auto;margin:0'>"
+    );
+    html += "<input type='checkbox' id='ssl' name='ssl' value='1' style='width:auto;margin:0'" + String(curSsl ? " checked" : "") + ">";
+    html += F(
       "<label for='ssl' style='margin:0;cursor:pointer;text-transform:none;font-size:13px'>Gunakan Koneksi Aman SSL / WSS</label>"
       "</div>"
       "<label>Device ID</label>"
-      "<input type='text' name='devId' placeholder='contoh: node-01' required>"
+    );
+    html += "<input type='text' name='devId' value='" + escapeHtml(curDevId) + "' placeholder='contoh: node-01' required>";
+    html += F(
       "<label>Device Secret Key</label>"
-      "<input type='text' name='devKey' placeholder='Kunci rahasia device' required>"
+    );
+    html += "<input type='text' name='devKey' value='" + escapeHtml(curDevKey) + "' placeholder='Kunci rahasia device' required>";
+    html += F(
       "<button type='submit'>Simpan & Sambungkan</button>"
       "</form>"
       "<div class='footer'>AgyGatewayClient Universal IoT Framework</div>"

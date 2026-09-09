@@ -3,6 +3,10 @@
 
 #include <Arduino.h>
 
+#if !defined(LED_BUILTIN)
+  #define LED_BUILTIN 2
+#endif
+
 #if defined(ESP8266)
   #include <ESP8266WiFi.h>
   #include <WiFiClientSecure.h>
@@ -126,6 +130,6 @@ private:
 };
 
 // Definisi variabel statis callback
-inline AgyOTAProgressCallback AgyOTA::_progressCb = nullptr;
+__attribute__((weak)) AgyOTAProgressCallback AgyOTA::_progressCb = nullptr;
 
 #endif // AGY_OTA_H

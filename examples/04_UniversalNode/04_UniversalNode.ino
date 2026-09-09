@@ -28,6 +28,10 @@ void setup() {
   Serial.printf("  AgyGatewayClient v%s\n", AGY_GATEWAY_CLIENT_VERSION);
   Serial.println("==========================================");
 
+#if !defined(LED_BUILTIN)
+  #define LED_BUILTIN 2
+#endif
+
   // 1. Aktifkan Hardware Watchdog Timer (8 detik)
   // Menjaga mikrokontroler tetap tangguh dan pulih dari freeze tak terduga
   iot.enableWatchdog(8);
@@ -41,13 +45,8 @@ void setup() {
   // 4. Auto-Connect:
   //    Membaca kredensial tersimpan dari Flash LittleFS.
   //    Jika belum ada atau gagal konek ke WiFi dalam timeout, otomatis membuka
-  //    Access Point Captive Portal.
-  //
-  //    Opsi 1: AP Terbuka tanpa password
-  //    iot.autoConnect("AGY-NODE-SETUP", 60);
-  //
-  //    Opsi 2: AP Terproteksi sandi WPA2 (Minimal 8 karakter)
-  iot.autoConnect("AGY-NODE-SETUP", "admin1234", 60);
+  //    Access Point Captive Portal Terbuka: AGY-NODE-[CHIP_ID]
+  iot.autoConnect(nullptr, nullptr, 60);
 }
 
 void loop() {

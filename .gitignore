@@ -1,0 +1,36 @@
+# ============================================================
+# AgyGatewayClient - Git Ignore
+# ============================================================
+
+# PlatformIO Build Artifacts & Temporary Files
+.pio/
+.pioenvs/
+.piolibdeps/
+firmware_builder/.pio/
+
+# Arduino & Compiler Outputs
+*.bin
+*.elf
+*.hex
+*.o
+*.a
+*.d
+*.map
+
+# Editor & Toolchain Files
+.vscode/
+.idea/
+.clangd/
+compile_commands.json
+*.swp
+*.swo
+*~
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Logs & Crash Reports
+*.log

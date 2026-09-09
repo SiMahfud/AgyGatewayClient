@@ -4,6 +4,11 @@
 #define AGY_GATEWAY_CLIENT_VERSION "1.2.0"
 
 #include <Arduino.h>
+
+#if !defined(LED_BUILTIN)
+  #define LED_BUILTIN 2
+#endif
+
 #include <vector>
 #include <map>
 #include <ArduinoJson.h>
