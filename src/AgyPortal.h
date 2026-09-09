@@ -185,12 +185,12 @@ private:
       "<hr style='border:0;border-top:1px solid #334155;margin:16px 0'>"
       "<label>Gateway Server Host / IP</label>"
     );
-    html += "<input type='text' name='host' value='" + escapeHtml(curHost) + "' placeholder='192.168.1.100 atau domain' required>";
+    html += "<input type='text' id='host' name='host' value='" + escapeHtml(curHost) + "' oninput=\"if(this.value.startsWith('https://')||this.value.startsWith('wss://')){document.getElementById('ssl').checked=true;document.getElementById('port').value='443';}\" placeholder='192.168.1.100 atau domain' required>";
     html += F(
       "<div style='display:flex;gap:10px'>"
       "<div style='flex:1'><label>Port</label>"
     );
-    html += "<input type='number' name='port' value='" + String(curPort) + "' required></div>";
+    html += "<input type='number' id='port' name='port' value='" + String(curPort) + "' onchange=\"if(this.value==='443') document.getElementById('ssl').checked=true;\" required></div>";
     html += F(
       "<div style='flex:1'><label>WS Path</label>"
     );
@@ -198,7 +198,7 @@ private:
     html += F(
       "<div style='margin-bottom:16px;display:flex;align-items:center;gap:8px'>"
     );
-    html += "<input type='checkbox' id='ssl' name='ssl' value='1' style='width:auto;margin:0'" + String(curSsl ? " checked" : "") + ">";
+    html += "<input type='checkbox' id='ssl' name='ssl' value='1' onchange=\"var p=document.getElementById('port');if(this.checked&&(p.value==='3050'||p.value==='80'))p.value='443';else if(!this.checked&&p.value==='443')p.value='3050';\" style='width:auto;margin:0'" + String(curSsl ? " checked" : "") + ">";
     html += F(
       "<label for='ssl' style='margin:0;cursor:pointer;text-transform:none;font-size:13px'>Gunakan Koneksi Aman SSL / WSS</label>"
       "</div>"
@@ -247,6 +247,37 @@ private:
     sanitize(host);
     sanitize(devId);
     sanitize(devKey);
+
+    // Deteksi dan bersihkan protokol dari host jika pengguna memasukkan URL lengkap
+    if (host.startsWith("https://")) {
+      host = host.substring(8);
+      useSsl = true;
+      if (portStr == "3050" || portStr.length() == 0) portStr = "443";
+    } else if (host.startsWith("wss://")) {
+      host = host.substring(6);
+      useSsl = true;
+      if (portStr == "3050" || portStr.length() == 0) portStr = "443";
+    } else if (host.startsWith("http://")) {
+      host = host.substring(7);
+    } else if (host.startsWith("ws://")) {
+      host = host.substring(5);
+    }
+
+    // Bersihkan path atau trailing slash jika ikut tertulis di host
+    int slashIdx = host.indexOf('/');
+    if (slashIdx >= 0) {
+      if (path == "/ws" || path.length() == 0) {
+        path = host.substring(slashIdx);
+      }
+      host = host.substring(0, slashIdx);
+    }
+
+    // Jika host mengandung port (misal domain:port)
+    int colonIdx = host.indexOf(':');
+    if (colonIdx >= 0) {
+      portStr = host.substring(colonIdx + 1);
+      host = host.substring(0, colonIdx);
+    }
 
     // Validasi field utama
     if (ssid.length() == 0 || host.length() == 0 || devId.length() == 0 || devKey.length() == 0) {
