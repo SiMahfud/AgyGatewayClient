@@ -29,6 +29,7 @@ Library ini dirancang untuk dua tipe pengguna:
 - [🐕 Hardware Watchdog Timer (WDT)](#-hardware-watchdog-timer-wdt)
 - [🔐 Keamanan & Session Token Handshake](#-keamanan--session-token-handshake)
 - [📡 Spesifikasi Format Protokol WebSocket JSON](#-spesifikasi-format-protokol-websocket-json)
+- [🖥️ Panduan & Spesifikasi Lengkap Gateway Server (GATEWAY_SERVER_SPEC.md)](GATEWAY_SERVER_SPEC.md)
 - [🔍 Driver Sensor & Aktuator Native (Zero-Dependency)](#-driver-sensor--aktuator-native-zero-dependency)
 - [📚 Referensi Lengkap C++ API](#-referensi-lengkap-c-api)
 - [💡 Indikator Status LED](#-indikator-status-led)
@@ -410,6 +411,9 @@ iot.setSendKeyOnTelemetry(false);
 ## 📡 Spesifikasi Format Protokol WebSocket JSON
 
 Bagian ini penting bagi pengembang Gateway Server / Dashboard Web.
+
+> [!TIP]
+> 📖 **Dokumentasi Lengkap Backend:** Untuk panduan menyeluruh pembuatan backend gateway (arsitektur WebSocket, skema database, endpoint REST API dashboard, heartbeat watchdog, dan contoh implementasi server Node.js), silakan baca **[GATEWAY_SERVER_SPEC.md](GATEWAY_SERVER_SPEC.md)**.
 
 ### 1. Registrasi Client -> Server (`event: "register"`)
 Dikirim otomatis oleh node sesaat setelah WebSocket `CONNECTED`:
